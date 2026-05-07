@@ -80,7 +80,7 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false }) {
   // прогресс расстройки: 0 = в нуле, 1 = край
   const detune = absC / 50;
   // в lock — полосы НЕ смыкаются полностью, оставляем зазор для разряда
-  const barW = locked ? 42 : (50 - detune * 36);
+  const barW = locked ? 42 : signal ? (50 - detune * 36) : 14;
   // ширина «коридора» разряда между концами полос (в % от шкалы)
   const sparkGap = locked ? (100 - barW * 2) : 0;
 
@@ -405,14 +405,17 @@ function TunerApp() {
   const [signal, setSignal]         = React.useState(false);
   const [inTune, setInTune]         = React.useState(false);
   const [autoIdx, setAutoIdx]       = React.useState(0);
-  const audioRef = React.useRef(null);
-  const lockRef  = React.useRef({ holdUntil: 0 });
+  const audioRef  = React.useRef(null);
+  const lockRef   = React.useRef({ holdUntil: 0 });
+  const smoothRef = React.useRef({ cents: 0, candidate: 0, votes: 0 });
 
   function tick(analyser, sampleRate) {
     const buf = new Float32Array(analyser.fftSize);
     analyser.getFloatTimeDomainData(buf);
     const freq = autoCorrelate(buf, sampleRate);
     if (freq < 0) {
+      smoothRef.current.cents = 0;
+      smoothRef.current.votes = 0;
       if (Date.now() > lockRef.current.holdUntil) {
         setInTune(false);
         setSignal(false);
@@ -425,11 +428,19 @@ function TunerApp() {
         const dist = Math.abs(1200 * Math.log2(freq / s.freq));
         if (dist < bestDist) { bestDist = dist; bestIdx = i; }
       });
-      const c = Math.max(-50, Math.min(50,
-        Math.round(1200 * Math.log2(freq / M_STRINGS[bestIdx].freq))
-      ));
+      // smooth cents with EMA (~220ms time constant) to reduce needle jitter
+      const rawC = Math.round(1200 * Math.log2(freq / M_STRINGS[bestIdx].freq));
+      smoothRef.current.cents = smoothRef.current.cents * 0.75 + rawC * 0.25;
+      const c = Math.max(-50, Math.min(50, Math.round(smoothRef.current.cents)));
+      // debounce string switching: require 3 consecutive detections (~165ms)
+      if (bestIdx === smoothRef.current.candidate) {
+        smoothRef.current.votes = Math.min(smoothRef.current.votes + 1, 5);
+      } else {
+        smoothRef.current.candidate = bestIdx;
+        smoothRef.current.votes = 1;
+      }
       setCents(c);
-      setAutoIdx(bestIdx);
+      if (smoothRef.current.votes >= 3) setAutoIdx(smoothRef.current.candidate);
       setSignal(true);
       if (Math.abs(c) <= 6) {
         setInTune(true);
