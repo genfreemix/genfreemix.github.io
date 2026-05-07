@@ -24,7 +24,7 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false }) {
     let raf;
     const tick = () => {
       const dx = angle - aRef.current;
-      vRef.current = (vRef.current + dx * 0.10) * 0.82;
+      vRef.current = (vRef.current + dx * 0.06) * 0.88;
       aRef.current += vRef.current;
       setA(aRef.current);
       raf = requestAnimationFrame(tick);
@@ -367,7 +367,7 @@ function autoCorrelate(buf, sampleRate) {
   let rms = 0;
   for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / SIZE);
-  if (rms < 0.007) return -1;
+  if (rms < 0.015) return -1;
   let r1 = 0, r2 = SIZE - 1;
   const THRES = 0.2;
   for (let i = 0; i < SIZE / 2; i++) {
@@ -421,26 +421,27 @@ function TunerApp() {
         setSignal(false);
       }
       setCents(0);
-    } else {
+    } else if (freq >= 70 && freq <= 420) {
+      // ignore anything outside guitar range (70–420 Hz) to reject harmonics/noise
       // find nearest guitar string
       let bestIdx = 0, bestDist = Infinity;
       M_STRINGS.forEach((s, i) => {
         const dist = Math.abs(1200 * Math.log2(freq / s.freq));
         if (dist < bestDist) { bestDist = dist; bestIdx = i; }
       });
-      // smooth cents with EMA (~220ms time constant) to reduce needle jitter
+      // smooth cents with EMA (~330ms time constant) to reduce needle jitter
       const rawC = Math.round(1200 * Math.log2(freq / M_STRINGS[bestIdx].freq));
-      smoothRef.current.cents = smoothRef.current.cents * 0.75 + rawC * 0.25;
+      smoothRef.current.cents = smoothRef.current.cents * 0.82 + rawC * 0.18;
       const c = Math.max(-50, Math.min(50, Math.round(smoothRef.current.cents)));
-      // debounce string switching: require 3 consecutive detections (~165ms)
+      // debounce string switching: require 4 consecutive detections (~220ms)
       if (bestIdx === smoothRef.current.candidate) {
-        smoothRef.current.votes = Math.min(smoothRef.current.votes + 1, 5);
+        smoothRef.current.votes = Math.min(smoothRef.current.votes + 1, 8);
       } else {
         smoothRef.current.candidate = bestIdx;
         smoothRef.current.votes = 1;
       }
       setCents(c);
-      if (smoothRef.current.votes >= 3) setAutoIdx(smoothRef.current.candidate);
+      if (smoothRef.current.votes >= 4) setAutoIdx(smoothRef.current.candidate);
       setSignal(true);
       if (Math.abs(c) <= 6) {
         setInTune(true);
@@ -467,7 +468,7 @@ function TunerApp() {
       await actx.resume();
       const stream = await streamPromise;
       const analyser = actx.createAnalyser();
-      analyser.fftSize = 2048;
+      analyser.fftSize = 4096;
       actx.createMediaStreamSource(stream).connect(analyser);
       audioRef.current = { actx, analyser };
       setMicRunning(true);
