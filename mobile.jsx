@@ -11,7 +11,7 @@ const M_STRINGS = [
 ];
 
 // ─── Mini VU (mobile) ───────────────────────────────────────────────
-function MobileVU({ cents, theme, lampColor, lampOn, inTune }) {
+function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false }) {
   const isMid = theme === 'midnight';
   const ink = isMid ? '#1a1208' : '#1a1612';
   const hot = isMid ? '#ff8a4a' : '#c83a16';
@@ -76,7 +76,7 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune }) {
   //  • в нуле — одна сплошная красная линия (locked)
   //  • при расстройстве полосы разъезжаются от центра к краям, становятся голубыми
   const absC = Math.min(50, Math.abs(targetCents));
-  const locked = inTune || absC <= 2;
+  const locked = signal && (inTune || absC <= 2);
   // прогресс расстройки: 0 = в нуле, 1 = край
   const detune = absC / 50;
   // в lock — полосы НЕ смыкаются полностью, оставляем зазор для разряда
@@ -255,7 +255,7 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
       </div>
 
       {/* VU */}
-      <MobileVU cents={cents} theme={theme} lampColor={lampColor} lampOn={true} inTune={inTune || (demo && Math.abs(demoCents) <= 2)} />
+      <MobileVU cents={cents} theme={theme} lampColor={lampColor} lampOn={true} inTune={inTune || (demo && Math.abs(demoCents) <= 2)} signal={signal || demo} />
 
       {/* Readout */}
       <div className="m-readout">
@@ -434,11 +434,14 @@ function TunerApp() {
     if (micRunning) return;
     try {
       const actx = new (window.AudioContext || window.webkitAudioContext)();
-      await actx.resume();
-      const stream = await navigator.mediaDevices.getUserMedia({
+      // getUserMedia must be called synchronously within the user gesture —
+      // start the promise before any await to satisfy mobile browser policy
+      const streamPromise = navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         video: false,
       });
+      await actx.resume();
+      const stream = await streamPromise;
       const analyser = actx.createAnalyser();
       analyser.fftSize = 2048;
       actx.createMediaStreamSource(stream).connect(analyser);
