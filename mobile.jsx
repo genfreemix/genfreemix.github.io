@@ -171,10 +171,14 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false }) {
 }
 
 // ─── Mobile shell ───────────────────────────────────────────────────
-function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents = -8, signal = true, inTune = false, onEngageMic = null }) {
+function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents = -8, signal = true, inTune = false, onEngageMic = null, autoIdx = 0 }) {
   const [theme, setTheme] = React.useState(initialTheme);
   const [activeIdx, setActiveIdx] = React.useState(initialActive);
   const [mode, setMode] = React.useState('AUTO');
+
+  React.useEffect(() => {
+    if (mode === 'AUTO' && signal) setActiveIdx(autoIdx);
+  }, [autoIdx, mode, signal]);
   const [demo, setDemo] = React.useState(false);
   const [demoCents, setDemoCents] = React.useState(0);
   const [demoString, setDemoString] = React.useState(0);
@@ -400,6 +404,7 @@ function TunerApp() {
   const [cents, setCents]           = React.useState(0);
   const [signal, setSignal]         = React.useState(false);
   const [inTune, setInTune]         = React.useState(false);
+  const [autoIdx, setAutoIdx]       = React.useState(0);
   const audioRef = React.useRef(null);
   const lockRef  = React.useRef({ holdUntil: 0 });
 
@@ -414,9 +419,17 @@ function TunerApp() {
       }
       setCents(0);
     } else {
-      const note = noteFromFreq(freq);
-      const c = Math.max(-50, Math.min(50, centsOff(freq, note)));
+      // find nearest guitar string
+      let bestIdx = 0, bestDist = Infinity;
+      M_STRINGS.forEach((s, i) => {
+        const dist = Math.abs(1200 * Math.log2(freq / s.freq));
+        if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+      });
+      const c = Math.max(-50, Math.min(50,
+        Math.round(1200 * Math.log2(freq / M_STRINGS[bestIdx].freq))
+      ));
       setCents(c);
+      setAutoIdx(bestIdx);
       setSignal(true);
       if (Math.abs(c) <= 6) {
         setInTune(true);
@@ -459,6 +472,7 @@ function TunerApp() {
       initialCents={cents}
       signal={signal}
       inTune={inTune}
+      autoIdx={autoIdx}
       onEngageMic={micRunning ? null : startMic}
     />
   );
