@@ -733,3 +733,83 @@ body {
 }
 .theme-midnight .m-mic-dot { background: #5fffaa; box-shadow: 0 0 8px rgba(95,255,170,0.8); }
 @keyframes m-mic-pulse { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:.5;transform:scale(.8);} }
+
+/* ── Settings sheet ────────────────────────────────────────────── */
+.m-settings-overlay {
+  position: absolute; inset: 0; z-index: 50;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: flex-end;
+}
+.m-settings-sheet {
+  width: 100%;
+  background: linear-gradient(180deg, #2a2620 0%, #14110d 100%);
+  border-radius: 16px 16px 0 0;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  padding: 12px 20px calc(20px + env(safe-area-inset-bottom, 8px));
+  display: flex; flex-direction: column; gap: 20px;
+  box-shadow: 0 -4px 32px rgba(0,0,0,0.7);
+}
+.m-settings-handle {
+  width: 36px; height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,0.18);
+  align-self: center; margin-bottom: 4px;
+}
+.m-settings-title {
+  font-size: 9px; letter-spacing: 0.32em; font-weight: 700;
+  color: rgba(255,180,80,0.6); text-align: center;
+}
+.theme-midnight .m-settings-title { color: rgba(95,255,170,0.6); }
+.m-settings-row { display: flex; flex-direction: column; gap: 8px; }
+.m-settings-label {
+  font-size: 8px; letter-spacing: 0.22em; font-weight: 600;
+  color: rgba(255,255,255,0.45);
+}
+.m-settings-slider-row {
+  display: flex; align-items: center; gap: 10px;
+}
+.m-settings-hint {
+  font-size: 7px; letter-spacing: 0.14em; color: rgba(255,255,255,0.3);
+  white-space: nowrap; min-width: 36px;
+}
+.m-settings-hint:last-child { text-align: right; }
+.m-settings-slider {
+  flex: 1; -webkit-appearance: none; appearance: none;
+  height: 3px; border-radius: 2px;
+  background: linear-gradient(90deg, #ffba5a 0%, rgba(255,255,255,0.15) 0%);
+  outline: none;
+}
+.m-settings-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 18px; height: 18px;
+  border-radius: 50%; cursor: pointer;
+  background: radial-gradient(circle at 35% 30%, #f0e4c8, #b8a878 60%, #6e6342 100%);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.4);
+}
+.theme-midnight .m-settings-slider::-webkit-slider-thumb {
+  background: radial-gradient(circle at 35% 30%, #f8d878, #c89438 60%, #6a4818 100%);
+}
+.m-settings-pills { display: flex; gap: 8px; }
+.m-settings-pill {
+  flex: 1; appearance: none; border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.05); border-radius: 6px;
+  padding: 8px 4px; cursor: pointer;
+  font-family: 'Courier New', monospace; font-size: 11px; font-weight: 700;
+  color: rgba(255,255,255,0.4); letter-spacing: 0.06em;
+}
+.m-settings-pill.on {
+  background: linear-gradient(180deg, #2a2620 0%, #14110d 100%);
+  color: #ffba5a; border-color: rgba(255,180,80,0.4);
+  box-shadow: 0 0 8px rgba(255,180,80,0.25), inset 0 2px 4px rgba(0,0,0,0.5);
+  text-shadow: 0 0 6px rgba(255,180,80,0.5);
+}
+.theme-midnight .m-settings-pill.on {
+  color: #5fffaa; border-color: rgba(95,255,170,0.4);
+  box-shadow: 0 0 8px rgba(95,255,170,0.25), inset 0 2px 4px rgba(0,0,0,0.5);
+  text-shadow: 0 0 6px rgba(95,255,170,0.5);
+}
+.m-settings-close {
+  appearance: none; border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.05); border-radius: 8px;
+  padding: 12px; cursor: pointer;
+  font-family: inherit; font-size: 9px; letter-spacing: 0.28em; font-weight: 700;
+  color: rgba(255,255,255,0.35);
+}

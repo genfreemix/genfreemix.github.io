@@ -11,7 +11,7 @@ const M_STRINGS = [
 ];
 
 // ─── Mini VU (mobile) ───────────────────────────────────────────────
-function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false }) {
+function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false, springK = 0.06, springD = 0.88 }) {
   const isMid = theme === 'midnight';
   const ink = isMid ? '#1a1208' : '#1a1612';
   const hot = isMid ? '#ff8a4a' : '#c83a16';
@@ -20,11 +20,15 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false }) {
   const angle = (targetCents / 50) * 55;
   const [a, setA] = React.useState(0);
   const aRef = React.useRef(0); const vRef = React.useRef(0);
+  const kRef = React.useRef(springK);
+  const dRef = React.useRef(springD);
+  React.useEffect(() => { kRef.current = springK; }, [springK]);
+  React.useEffect(() => { dRef.current = springD; }, [springD]);
   React.useEffect(() => {
     let raf;
     const tick = () => {
       const dx = angle - aRef.current;
-      vRef.current = (vRef.current + dx * 0.06) * 0.88;
+      vRef.current = (vRef.current + dx * kRef.current) * dRef.current;
       aRef.current += vRef.current;
       setA(aRef.current);
       raf = requestAnimationFrame(tick);
@@ -171,14 +175,22 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false }) {
 }
 
 // ─── Mobile shell ───────────────────────────────────────────────────
-function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents = -8, signal = true, inTune = false, onEngageMic = null, autoIdx = 0 }) {
+function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents = -8, signal = true, inTune = false, onEngageMic = null, autoIdx = 0, onSettingsChange = null }) {
   const [theme, setTheme] = React.useState(initialTheme);
   const [activeIdx, setActiveIdx] = React.useState(initialActive);
   const [mode, setMode] = React.useState('AUTO');
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [needleSpeed, setNeedleSpeed]   = React.useState(0.5);
+  const [sensitivity, setSensitivity]   = React.useState(0.5);
+  const [refA, setRefA]                 = React.useState(440);
 
   React.useEffect(() => {
     if (mode === 'AUTO' && signal) setActiveIdx(autoIdx);
   }, [autoIdx, mode, signal]);
+
+  React.useEffect(() => {
+    onSettingsChange?.({ needleSpeed, sensitivity, refA });
+  }, [needleSpeed, sensitivity, refA]);
   const [demo, setDemo] = React.useState(false);
   const [demoCents, setDemoCents] = React.useState(0);
   const [demoString, setDemoString] = React.useState(0);
@@ -259,7 +271,8 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
       </div>
 
       {/* VU */}
-      <MobileVU cents={cents} theme={theme} lampColor={lampColor} lampOn={true} inTune={inTune || (demo && Math.abs(demoCents) <= 2)} signal={signal || demo} />
+      <MobileVU cents={cents} theme={theme} lampColor={lampColor} lampOn={true} inTune={inTune || (demo && Math.abs(demoCents) <= 2)} signal={signal || demo}
+        springK={0.03 + needleSpeed * 0.09} springD={0.92 - needleSpeed * 0.10} />
 
       {/* Readout */}
       <div className="m-readout">
@@ -339,7 +352,7 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
           <span className="m-mic-dot" />
           ENGAGE MIC
         </button>
-        <button className="m-icon-btn" title="Settings">
+        <button className="m-icon-btn" title="Settings" onClick={() => setSettingsOpen(true)}>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3" />
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
@@ -348,6 +361,47 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
       </div>
 
       <div className="m-safe-bottom" />
+
+      {settingsOpen && (
+        <div className="m-settings-overlay" onClick={() => setSettingsOpen(false)}>
+          <div className="m-settings-sheet" onClick={e => e.stopPropagation()}>
+            <div className="m-settings-handle" />
+            <div className="m-settings-title">SETTINGS</div>
+
+            <div className="m-settings-row">
+              <div className="m-settings-label">NEEDLE RESPONSE</div>
+              <div className="m-settings-slider-row">
+                <span className="m-settings-hint">SMOOTH</span>
+                <input className="m-settings-slider" type="range" min="0" max="1" step="0.05"
+                  value={needleSpeed} onChange={e => setNeedleSpeed(+e.target.value)} />
+                <span className="m-settings-hint">FAST</span>
+              </div>
+            </div>
+
+            <div className="m-settings-row">
+              <div className="m-settings-label">SENSITIVITY</div>
+              <div className="m-settings-slider-row">
+                <span className="m-settings-hint">LOW</span>
+                <input className="m-settings-slider" type="range" min="0" max="1" step="0.05"
+                  value={sensitivity} onChange={e => setSensitivity(+e.target.value)} />
+                <span className="m-settings-hint">HIGH</span>
+              </div>
+            </div>
+
+            <div className="m-settings-row">
+              <div className="m-settings-label">REF · A</div>
+              <div className="m-settings-pills">
+                {[432, 440, 442].map(hz => (
+                  <button key={hz} className={`m-settings-pill ${refA === hz ? 'on' : ''}`}
+                    onClick={() => setRefA(hz)}>{hz} Hz</button>
+                ))}
+              </div>
+            </div>
+
+            <button className="m-settings-close" onClick={() => setSettingsOpen(false)}>CLOSE</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -362,12 +416,12 @@ function freqFromNote(n) {
 function centsOff(freq, note) {
   return Math.round(1200 * Math.log2(freq / freqFromNote(note)));
 }
-function autoCorrelate(buf, sampleRate) {
+function autoCorrelate(buf, sampleRate, rmsThreshold = 0.015) {
   const SIZE = buf.length;
   let rms = 0;
   for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / SIZE);
-  if (rms < 0.015) return -1;
+  if (rms < rmsThreshold) return -1;
   let r1 = 0, r2 = SIZE - 1;
   const THRES = 0.2;
   for (let i = 0; i < SIZE / 2; i++) {
@@ -408,11 +462,18 @@ function TunerApp() {
   const audioRef  = React.useRef(null);
   const lockRef   = React.useRef({ holdUntil: 0 });
   const smoothRef = React.useRef({ cents: 0, candidate: 0, votes: 0 });
+  const paramsRef = React.useRef({ rmsThreshold: 0.015, emaAlpha: 0.18, refA: 440 });
+
+  function handleSettingsChange({ needleSpeed, sensitivity, refA }) {
+    paramsRef.current.emaAlpha     = 0.10 + needleSpeed * 0.25;
+    paramsRef.current.rmsThreshold = 0.04  - sensitivity  * 0.035;
+    paramsRef.current.refA         = refA;
+  }
 
   function tick(analyser, sampleRate) {
     const buf = new Float32Array(analyser.fftSize);
     analyser.getFloatTimeDomainData(buf);
-    const freq = autoCorrelate(buf, sampleRate);
+    const freq = autoCorrelate(buf, sampleRate, paramsRef.current.rmsThreshold);
     if (freq < 0) {
       smoothRef.current.cents = 0;
       smoothRef.current.votes = 0;
@@ -429,9 +490,11 @@ function TunerApp() {
         const dist = Math.abs(1200 * Math.log2(freq / s.freq));
         if (dist < bestDist) { bestDist = dist; bestIdx = i; }
       });
-      // smooth cents with EMA (~330ms time constant) to reduce needle jitter
-      const rawC = Math.round(1200 * Math.log2(freq / M_STRINGS[bestIdx].freq));
-      smoothRef.current.cents = smoothRef.current.cents * 0.82 + rawC * 0.18;
+      // smooth cents with EMA, alpha from settings
+      const refScale = paramsRef.current.refA / 440;
+      const rawC = Math.round(1200 * Math.log2(freq / (M_STRINGS[bestIdx].freq * refScale)));
+      const a = paramsRef.current.emaAlpha;
+      smoothRef.current.cents = smoothRef.current.cents * (1 - a) + rawC * a;
       const c = Math.max(-50, Math.min(50, Math.round(smoothRef.current.cents)));
       // debounce string switching: require 4 consecutive detections (~220ms)
       if (bestIdx === smoothRef.current.candidate) {
@@ -486,6 +549,7 @@ function TunerApp() {
       inTune={inTune}
       autoIdx={autoIdx}
       onEngageMic={micRunning ? null : startMic}
+      onSettingsChange={handleSettingsChange}
     />
   );
 }
