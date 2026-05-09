@@ -481,7 +481,7 @@ function TunerApp() {
   const [autoIdx, setAutoIdx]       = React.useState(0);
   const audioRef  = React.useRef(null);
   const lockRef   = React.useRef({ holdUntil: 0 });
-  const smoothRef = React.useRef({ cents: 0, candidate: 0, votes: 0 });
+  const stableRef = React.useRef({ history: [], candidate: 0, votes: 0, silenceCount: 0 });
   const paramsRef = React.useRef({ rmsThreshold: 0.015, emaAlpha: 0.18, refA: 440 });
 
   function handleSettingsChange({ needleSpeed, sensitivity, refA }) {
@@ -494,45 +494,61 @@ function TunerApp() {
     const buf = new Float32Array(analyser.fftSize);
     analyser.getFloatTimeDomainData(buf);
     const freq = detectPitch(buf, sampleRate, paramsRef.current.rmsThreshold);
+
     if (freq < 0) {
-      smoothRef.current.cents = 0;
-      smoothRef.current.votes = 0;
-      if (Date.now() > lockRef.current.holdUntil) {
+      stableRef.current.history = [];
+      stableRef.current.silenceCount = Math.min(stableRef.current.silenceCount + 1, 20);
+      if (stableRef.current.silenceCount > 6 && Date.now() > lockRef.current.holdUntil) {
         setInTune(false);
         setSignal(false);
       }
-      setCents(0);
     } else {
-      // ignore anything outside guitar range (70–420 Hz) to reject harmonics/noise
-      // find nearest guitar string
+      stableRef.current.silenceCount = 0;
+      setSignal(true);
+
+      // Найти ближайшую гитарную струну
+      const refScale = paramsRef.current.refA / 440;
       let bestIdx = 0, bestDist = Infinity;
       M_STRINGS.forEach((s, i) => {
-        const dist = Math.abs(1200 * Math.log2(freq / s.freq));
+        const dist = Math.abs(1200 * Math.log2(freq / (s.freq * refScale)));
         if (dist < bestDist) { bestDist = dist; bestIdx = i; }
       });
-      // smooth cents with EMA, alpha from settings
-      const refScale = paramsRef.current.refA / 440;
-      const rawC = Math.round(1200 * Math.log2(freq / (M_STRINGS[bestIdx].freq * refScale)));
-      const a = paramsRef.current.emaAlpha;
-      smoothRef.current.cents = smoothRef.current.cents * (1 - a) + rawC * a;
-      const c = Math.max(-50, Math.min(50, Math.round(smoothRef.current.cents)));
-      // debounce string switching: require 4 consecutive detections (~220ms)
-      if (bestIdx === smoothRef.current.candidate) {
-        smoothRef.current.votes = Math.min(smoothRef.current.votes + 1, 8);
+
+      // Сбрасываем историю если сменилась струна
+      if (bestIdx !== stableRef.current.candidate) {
+        stableRef.current.history = [];
+        stableRef.current.candidate = bestIdx;
+        stableRef.current.votes = 1;
       } else {
-        smoothRef.current.candidate = bestIdx;
-        smoothRef.current.votes = 1;
+        stableRef.current.votes = Math.min(stableRef.current.votes + 1, 10);
       }
-      setCents(c);
-      if (smoothRef.current.votes >= 4) setAutoIdx(smoothRef.current.candidate);
-      setSignal(true);
-      if (Math.abs(c) <= 6) {
-        setInTune(true);
-        lockRef.current.holdUntil = Date.now() + 2000;
-      } else if (Math.abs(c) > 14 && Date.now() > lockRef.current.holdUntil) {
-        setInTune(false);
+
+      // Накапливаем замеры
+      const rawC = 1200 * Math.log2(freq / (M_STRINGS[bestIdx].freq * refScale));
+      const h = stableRef.current.history;
+      h.push(rawC);
+      if (h.length > 8) h.shift();
+
+      // Обновляем стрелку ТОЛЬКО когда последние 4 замера совпадают (±12¢)
+      // Во время атаки струны держим старое значение — как реальный тюнер
+      if (h.length >= 4) {
+        const last4 = h.slice(-4);
+        const span = Math.max(...last4) - Math.min(...last4);
+        if (span <= 12) {
+          const avg = last4.reduce((s, v) => s + v, 0) / 4;
+          const c = Math.max(-50, Math.min(50, Math.round(avg)));
+          setCents(c);
+          if (stableRef.current.votes >= 4) setAutoIdx(bestIdx);
+          if (Math.abs(c) <= 4) {
+            setInTune(true);
+            lockRef.current.holdUntil = Date.now() + 2500;
+          } else if (Math.abs(c) > 12 && Date.now() > lockRef.current.holdUntil) {
+            setInTune(false);
+          }
+        }
       }
     }
+
     setTimeout(() => {
       if (audioRef.current) tick(audioRef.current.analyser, sampleRate);
     }, 55);
