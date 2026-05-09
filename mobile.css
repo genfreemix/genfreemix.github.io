@@ -387,7 +387,7 @@ body {
   100% { opacity: 0.85; transform: translate(-50%, -50%) scale(1.05); }
 }
 
-/* lock state — полосы становятся красными, между ними бьёт разряд */
+/* lock state — полосы становятся зелёными, между ними бьёт разряд */
 .m-hbar.locked .m-hbar-left,
 .m-hbar.locked .m-hbar-right {
   background:
@@ -399,24 +399,24 @@ body {
       rgba(255,255,255,0.10) 0px, rgba(255,255,255,0.10) 1px,
       transparent 1px, transparent 5px),
     linear-gradient(180deg,
-      #ffd0c4 0%,
-      #ff6a4a 30%,
-      #e8200c 70%,
-      #8a0a04 100%);
+      #c4ffd8 0%,
+      #3ad17a 30%,
+      #0aae4a 70%,
+      #046b28 100%);
   box-shadow:
-    0 0 16px rgba(255,74,58,0.95),
-    0 0 36px rgba(255,74,58,0.65),
+    0 0 16px rgba(58,209,122,0.95),
+    0 0 36px rgba(58,209,122,0.65),
     inset 0 1px 0 rgba(255,255,255,0.55),
-    inset 0 -2px 3px rgba(80,0,0,0.55),
-    inset 0 0 0 1px rgba(120,10,0,0.55);
+    inset 0 -2px 3px rgba(0,60,20,0.55),
+    inset 0 0 0 1px rgba(0,100,40,0.55);
 }
 .m-hbar.locked .m-hbar-left::after,
 .m-hbar.locked .m-hbar-right::after {
   background: radial-gradient(circle at 35% 30%,
-    #ffffff 0%, #ffc8b8 30%, #ff5a3a 65%, #c8170a 100%);
+    #ffffff 0%, #b8ffd0 30%, #3ad17a 65%, #0a6b28 100%);
   box-shadow:
-    0 0 14px rgba(255,180,160,0.95),
-    0 0 26px rgba(255,74,58,0.75);
+    0 0 14px rgba(160,255,200,0.95),
+    0 0 26px rgba(58,209,122,0.75);
 }
 .m-hbar.locked .m-hbar-center { opacity: 0; }
 .m-hbar-lock {
@@ -424,7 +424,7 @@ body {
   border-radius: 12px;
   opacity: 0;
   background: radial-gradient(ellipse at 50% 50%,
-    rgba(255,90,60,0.5) 0%, rgba(255,90,60,0) 70%);
+    rgba(58,209,122,0.5) 0%, rgba(58,209,122,0) 70%);
   z-index: 2;
   pointer-events: none;
 }
