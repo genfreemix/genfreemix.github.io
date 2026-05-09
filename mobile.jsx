@@ -301,7 +301,7 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
         </div>
         <div className="m-strings-row">
           {M_STRINGS.map((str, i) => {
-            const isActive = i === activeIdx;
+            const isActive = i === activeIdx && (mode === 'MANUAL' || signal || demo);
             return (
               <button key={i} className="m-string-btn" onClick={() => setActiveIdx(i)}>
                 <div className="m-lamp-cap">
