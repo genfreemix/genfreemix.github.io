@@ -404,9 +404,9 @@ function MobileTuner({
                 aria-label="Open Gen Rubit"
                 onClick={() => setPromoOpen(true)}
                 onContextMenu={blockLogoNativeMenu} />
-        <button className={`m-mic-btn ${micRunning ? 'running' : ''}`} onClick={onEngageMic} disabled={micRunning}>
+        <button className={`m-mic-btn ${micRunning ? 'running' : ''}`} onClick={onEngageMic}>
           <span className="m-mic-dot" />
-          {micRunning ? 'LISTENING' : 'ENGAGE MIC'}
+          {micRunning ? 'STOP MIC' : 'ENGAGE MIC'}
         </button>
         <button className="m-icon-btn" title="Settings" onClick={() => setSettingsOpen(true)}>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -670,6 +670,57 @@ function TunerApp() {
   const stableRef = React.useRef({ history: [], candidate: 0, votes: 0, silenceCount: 0, smoothCents: 0, lastTrebleAt: 0 });
   const paramsRef = React.useRef({ rmsThreshold: 0.00114, emaAlpha: 0.18, refA: 440, mode: 'AUTO', activeIdx: 0 });
 
+  function releaseAudioHandle(handle) {
+    if (!handle) return;
+    handle.stopped = true;
+    if (handle.timerId) {
+      clearTimeout(handle.timerId);
+      handle.timerId = null;
+    }
+    [handle.source, handle.inputGain, handle.analyser].forEach((node) => {
+      try { node?.disconnect?.(); } catch (_) {}
+    });
+    try { handle.stream?.getTracks?.().forEach(track => track.stop()); } catch (_) {}
+    try {
+      if (handle.actx && handle.actx.state !== 'closed') {
+        const closePromise = handle.actx.close();
+        closePromise?.catch?.(() => {});
+      }
+    } catch (_) {}
+  }
+
+  function stopMic({ resetState = true } = {}) {
+    const handle = audioRef.current;
+    audioRef.current = null;
+    releaseAudioHandle(handle);
+    startingRef.current = false;
+    stableRef.current.history = [];
+    stableRef.current.silenceCount = 0;
+    stableRef.current.votes = 0;
+    lockRef.current.holdUntil = 0;
+    if (!resetState) return;
+    setMicRunning(false);
+    setSignal(false);
+    setInTune(false);
+    setLockReady(false);
+    setReadingReady(false);
+    setInputFreq(null);
+  }
+
+  React.useEffect(() => {
+    const stopOnPageHide = () => stopMic();
+    const stopOnHidden = () => {
+      if (document.hidden) stopMic();
+    };
+    window.addEventListener('pagehide', stopOnPageHide);
+    document.addEventListener('visibilitychange', stopOnHidden);
+    return () => {
+      window.removeEventListener('pagehide', stopOnPageHide);
+      document.removeEventListener('visibilitychange', stopOnHidden);
+      stopMic({ resetState: false });
+    };
+  }, []);
+
   function handleSettingsChange({ needleSpeed, sensitivity, refA }) {
     paramsRef.current.emaAlpha     = 0.10 + needleSpeed * 0.25;
     paramsRef.current.rmsThreshold = 0.0095 - sensitivity * 0.0088;
@@ -693,6 +744,9 @@ function TunerApp() {
   }
 
   function tick(analyser, sampleRate) {
+    const handle = audioRef.current;
+    if (!handle || handle.stopped || document.hidden) return;
+
     const buf = new Float32Array(analyser.fftSize);
     analyser.getFloatTimeDomainData(buf);
     const pitchLong = detectPitch(buf, sampleRate, paramsRef.current.rmsThreshold, { preferEarly: true, minPeak: 0.48 });
@@ -790,8 +844,9 @@ function TunerApp() {
       const rawC = targetMatch.cents;
       const isTrebleString = targetIdx >= 4;
       if (targetIdx >= 4 && Math.abs(rawC) > 90) {
-        setTimeout(() => {
-          if (audioRef.current) tick(audioRef.current.analyser, sampleRate);
+        handle.timerId = setTimeout(() => {
+          const current = audioRef.current;
+          if (current && !current.stopped && !document.hidden) tick(current.analyser, sampleRate);
         }, 55);
         return;
       }
@@ -799,8 +854,9 @@ function TunerApp() {
       if (isTrebleString && h.length >= 4) {
         const baseline = mMedian(h.slice(-5));
         if (Math.abs(rawC - baseline) > 28 && pitch.clarity < 0.92) {
-          setTimeout(() => {
-            if (audioRef.current) tick(audioRef.current.analyser, sampleRate);
+          handle.timerId = setTimeout(() => {
+            const current = audioRef.current;
+            if (current && !current.stopped && !document.hidden) tick(current.analyser, sampleRate);
           }, 55);
           return;
         }
@@ -837,16 +893,20 @@ function TunerApp() {
       }
     }
 
-    setTimeout(() => {
-      if (audioRef.current) tick(audioRef.current.analyser, sampleRate);
+    handle.timerId = setTimeout(() => {
+      const current = audioRef.current;
+      if (current && !current.stopped && !document.hidden) tick(current.analyser, sampleRate);
     }, 55);
   }
 
   async function startMic() {
     if (micRunning || startingRef.current || audioRef.current) return;
     startingRef.current = true;
+    let handle = null;
     try {
       const actx = new (window.AudioContext || window.webkitAudioContext)();
+      handle = { actx, stream: null, source: null, analyser: null, inputGain: null, timerId: null, stopped: false };
+      audioRef.current = handle;
       // getUserMedia must be called synchronously within the user gesture —
       // start the promise before any await to satisfy mobile browser policy
       const streamPromise = navigator.mediaDevices.getUserMedia({
@@ -855,17 +915,28 @@ function TunerApp() {
       });
       await actx.resume();
       const stream = await streamPromise;
+      handle.stream = stream;
+      if (handle.stopped || audioRef.current !== handle) {
+        releaseAudioHandle(handle);
+        startingRef.current = false;
+        return;
+      }
       const analyser = actx.createAnalyser();
       const inputGain = actx.createGain();
+      const source = actx.createMediaStreamSource(stream);
+      handle.source = source;
+      handle.analyser = analyser;
+      handle.inputGain = inputGain;
       inputGain.gain.value = 2.45;
       analyser.fftSize = 8192;
       analyser.smoothingTimeConstant = 0;
-      actx.createMediaStreamSource(stream).connect(inputGain).connect(analyser);
-      audioRef.current = { actx, analyser, inputGain };
+      source.connect(inputGain).connect(analyser);
       setMicRunning(true);
       startingRef.current = false;
       tick(analyser, actx.sampleRate);
     } catch(e) {
+      if (audioRef.current === handle) audioRef.current = null;
+      releaseAudioHandle(handle);
       startingRef.current = false;
       console.error(e);
       alert('Microphone access is required to use the tuner.');
@@ -881,7 +952,7 @@ function TunerApp() {
       micRunning={micRunning}
       inputFreq={inputFreq}
       autoIdx={autoIdx}
-      onEngageMic={micRunning ? null : startMic}
+      onEngageMic={micRunning ? stopMic : startMic}
       onSettingsChange={handleSettingsChange}
       onTuningTargetChange={handleTuningTargetChange}
     />
