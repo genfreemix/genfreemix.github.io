@@ -10,10 +10,46 @@ const M_STRINGS = [
   { name: '1', note: 'E', octave: 4, freq: 329.63 },
 ];
 
+function mClamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function mMedian(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function mRefScale(refA) {
+  return (refA || 440) / 440;
+}
+
+function mCorrectedPitchForString(freq, targetFreq, maxHarmonic = 4) {
+  let best = { freq, cents: 1200 * Math.log2(freq / targetFreq), harmonic: 1, score: Infinity };
+  [1, 2, 3, 4].filter(h => h <= maxHarmonic).forEach((harmonic) => {
+    const corrected = freq / harmonic;
+    const cents = 1200 * Math.log2(corrected / targetFreq);
+    const score = Math.abs(cents) + (harmonic - 1) * 18;
+    if (score < best.score) best = { freq: corrected, cents, harmonic, score };
+  });
+  return best;
+}
+
+function mNearestStringMatch(freq, refScale) {
+  let best = { idx: 0, freq, cents: 0, harmonic: 1, score: Infinity };
+  M_STRINGS.forEach((s, idx) => {
+    const match = mCorrectedPitchForString(freq, s.freq * refScale, idx >= 4 ? 1 : 4);
+    if (match.score < best.score) best = { idx, ...match };
+  });
+  return best;
+}
+
 // ─── Mini VU (mobile) ───────────────────────────────────────────────
-function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false, springK = 0.06, springD = 0.88 }) {
+function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false, readingReady = false, springK = 0.06, springD = 0.88 }) {
   const isMid = theme === 'midnight';
-  const ink = isMid ? '#1a1208' : '#1a1612';
+  const ink = isMid ? '#f3d58a' : '#1a1612';
+  const needleInk = isMid ? '#ffe7a3' : '#1a1612';
+  const pivotInk = isMid ? '#d69a38' : '#1a1612';
   const hot = isMid ? '#ff8a4a' : '#c83a16';
 
   const targetCents = Math.max(-50, Math.min(50, cents ?? 0));
@@ -55,13 +91,15 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false, spr
     const y2 = cy + Math.sin(rad) * (r - len);
     const inHot = v >= 20;
     ticks.push(<line key={'t'+v} x1={x1} y1={y1} x2={x2} y2={y2}
-      stroke={inHot ? hot : ink} strokeWidth={w} />);
+      stroke={inHot ? hot : ink} strokeWidth={w}
+      opacity={isMid && !inHot ? 0.82 : 1} />);
     if (isMajor) {
       const lx = cx + Math.cos(rad) * (r - 50);
       const ly = cy + Math.sin(rad) * (r - 50);
       ticks.push(<text key={'l'+v} x={lx} y={ly}
         textAnchor="middle" dominantBaseline="middle"
         fill={inHot ? hot : ink}
+        opacity={isMid && !inHot ? 0.9 : 1}
         fontFamily="'Helvetica Neue', sans-serif"
         fontWeight={v === 0 ? 700 : 600}
         fontSize={v === 0 ? 44 : 34}
@@ -80,11 +118,12 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false, spr
   //  • в нуле — одна сплошная красная линия (locked)
   //  • при расстройстве полосы разъезжаются от центра к краям, становятся голубыми
   const absC = Math.min(50, Math.abs(targetCents));
-  const locked = signal && (inTune || absC <= 2);
+  const locked = signal && inTune;
+  const hasStableRead = signal && readingReady;
   // прогресс расстройки: 0 = в нуле, 1 = край
   const detune = absC / 50;
   // в lock — полосы НЕ смыкаются полностью, оставляем зазор для разряда
-  const barW = locked ? 42 : signal ? (50 - detune * 36) : 14;
+  const barW = locked ? 42 : hasStableRead ? (50 - detune * 36) : 14;
   // ширина «коридора» разряда между концами полос (в % от шкалы)
   const sparkGap = locked ? (100 - barW * 2) : 0;
 
@@ -160,13 +199,13 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false, spr
         {/* стрелка */}
         <g transform={`rotate(${a} ${cx} ${cy})`}>
           <line x1={cx} y1={cy} x2={cx} y2={cy + 50}
-                stroke={ink} strokeWidth="5" strokeLinecap="round" />
-          <circle cx={cx} cy={cy + 50} r="9" fill={ink} />
+                stroke={needleInk} strokeWidth="5" strokeLinecap="round" />
+          <circle cx={cx} cy={cy + 50} r="9" fill={needleInk} />
           <line x1={cx} y1={cy} x2={cx} y2={cy - r + 18}
-                stroke={ink} strokeWidth="4" strokeLinecap="round" />
-          <polygon points={`${cx-5.5},${cy-r+30} ${cx+5.5},${cy-r+30} ${cx},${cy-r+10}`} fill={ink} />
+                stroke={needleInk} strokeWidth="4" strokeLinecap="round" />
+          <polygon points={`${cx-5.5},${cy-r+30} ${cx+5.5},${cy-r+30} ${cx},${cy-r+10}`} fill={needleInk} />
         </g>
-        <circle cx={cx} cy={cy} r="18" fill={ink} />
+        <circle cx={cx} cy={cy} r="18" fill={pivotInk} />
         <circle cx={cx} cy={cy} r="4" fill="#0a0807" />
       </svg>
       <div className="m-vu-bezel" />
@@ -175,13 +214,27 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false, spr
 }
 
 // ─── Mobile shell ───────────────────────────────────────────────────
-function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents = -8, signal = true, inTune = false, onEngageMic = null, autoIdx = 0, onSettingsChange = null }) {
+function MobileTuner({
+  initialTheme = 'cream',
+  initialActive = 0,
+  initialCents = -8,
+  signal = true,
+  inTune = false,
+  readingReady = false,
+  onEngageMic = null,
+  micRunning = false,
+  inputFreq = null,
+  autoIdx = 0,
+  onSettingsChange = null,
+  onTuningTargetChange = null,
+}) {
   const [theme, setTheme] = React.useState(initialTheme);
   const [activeIdx, setActiveIdx] = React.useState(initialActive);
   const [mode, setMode] = React.useState('AUTO');
   const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [promoOpen, setPromoOpen] = React.useState(false);
   const [needleSpeed, setNeedleSpeed]   = React.useState(0.5);
-  const [sensitivity, setSensitivity]   = React.useState(0.5);
+  const [sensitivity, setSensitivity]   = React.useState(0.95);
   const [refA, setRefA]                 = React.useState(440);
 
   React.useEffect(() => {
@@ -191,13 +244,18 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
   React.useEffect(() => {
     onSettingsChange?.({ needleSpeed, sensitivity, refA });
   }, [needleSpeed, sensitivity, refA]);
+  React.useEffect(() => {
+    onTuningTargetChange?.({ mode, activeIdx, refA });
+  }, [mode, activeIdx, refA]);
   const [demo, setDemo] = React.useState(false);
   const [demoCents, setDemoCents] = React.useState(0);
   const [demoString, setDemoString] = React.useState(0);
   const lampColor = theme === 'midnight' ? '#a4d8ff' : '#ffb24a';
   const s = M_STRINGS[demo ? demoString : activeIdx];
   const cents = demo ? demoCents : initialCents;
-  const freq = s.freq * Math.pow(2, cents / 1200);
+  const readoutLocked = (signal && inTune) || (demo && Math.abs(cents) <= 2);
+  const targetFreq = s.freq * mRefScale(refA);
+  const freq = demo ? targetFreq * Math.pow(2, cents / 1200) : (signal && inputFreq ? inputFreq : targetFreq * Math.pow(2, cents / 1200));
 
   // self-test demo: стрелка плывёт, струны переключаются по очереди
   React.useEffect(() => {
@@ -216,13 +274,9 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
     return () => cancelAnimationFrame(raf);
   }, [demo]);
 
-  // long-press на нижнем логотипе → toggle demo
-  const lpRef = React.useRef(null);
-  const onLogoDown = () => {
-    lpRef.current = setTimeout(() => setDemo(d => !d), 600);
-  };
-  const onLogoUp = () => {
-    if (lpRef.current) { clearTimeout(lpRef.current); lpRef.current = null; }
+  const blockLogoNativeMenu = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   return (
@@ -266,12 +320,15 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
         </div>
         <div className="m-ref-pill">
           <div className="m-ref-pill-label">REF · A</div>
-          <div className="m-ref-pill-val">440 Hz</div>
+          <div className="m-ref-pill-val">{refA} Hz</div>
         </div>
       </div>
 
       {/* VU */}
-      <MobileVU cents={cents} theme={theme} lampColor={lampColor} lampOn={true} inTune={inTune || (demo && Math.abs(demoCents) <= 2)} signal={signal || demo}
+      <MobileVU cents={cents} theme={theme} lampColor={lampColor} lampOn={true}
+        inTune={inTune || (demo && Math.abs(demoCents) <= 2)}
+        signal={signal || demo}
+        readingReady={readingReady || demo}
         springK={0.03 + needleSpeed * 0.09} springD={0.92 - needleSpeed * 0.10} />
 
       {/* Readout */}
@@ -284,7 +341,7 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
           <div className="m-readout-label">FREQ · Hz</div>
           <div className="m-readout-mono">{freq.toFixed(2)}</div>
         </div>
-        <div className="m-readout-cell">
+        <div className={`m-readout-cell cents ${readoutLocked ? 'locked' : ''}`}>
           <div className="m-readout-label">CENTS</div>
           <div className="m-readout-mono">{cents > 0 ? '+' : ''}{cents}<span>¢</span></div>
         </div>
@@ -303,7 +360,7 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
           {M_STRINGS.map((str, i) => {
             const isActive = i === activeIdx && (mode === 'MANUAL' || signal || demo);
             return (
-              <button key={i} className="m-string-btn" onClick={() => setActiveIdx(i)}>
+              <button key={i} className="m-string-btn" onClick={() => { setActiveIdx(i); setMode('MANUAL'); }}>
                 <div className="m-lamp-cap">
                   <div className="m-lamp" style={{
                     opacity: isActive ? 1 : 0.1,
@@ -343,14 +400,13 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
 
       {/* Dock */}
       <div className="m-dock">
-        <button className={`m-icon-btn ${demo ? 'demo-on' : ''}`} title="Hold for demo mode"
-                onMouseDown={onLogoDown} onMouseUp={onLogoUp} onMouseLeave={onLogoUp}
-                onTouchStart={onLogoDown} onTouchEnd={onLogoUp}>
-          <img src="assets/gr-logo.png" alt="GR" />
-        </button>
-        <button className="m-mic-btn" onClick={onEngageMic}>
+        <button className="m-icon-btn m-logo-btn" title="Gen Rubit"
+                aria-label="Open Gen Rubit"
+                onClick={() => setPromoOpen(true)}
+                onContextMenu={blockLogoNativeMenu} />
+        <button className={`m-mic-btn ${micRunning ? 'running' : ''}`} onClick={onEngageMic} disabled={micRunning}>
           <span className="m-mic-dot" />
-          ENGAGE MIC
+          {micRunning ? 'LISTENING' : 'ENGAGE MIC'}
         </button>
         <button className="m-icon-btn" title="Settings" onClick={() => setSettingsOpen(true)}>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -402,6 +458,36 @@ function MobileTuner({ initialTheme = 'cream', initialActive = 0, initialCents =
           </div>
         </div>
       )}
+
+      {promoOpen && (
+        <div className="m-promo-overlay" onClick={() => setPromoOpen(false)}>
+          <div className="m-promo-sheet" onClick={e => e.stopPropagation()}>
+            <div className="m-settings-handle" />
+            <div className="m-promo-head">
+              <div className="m-promo-mark" />
+              <div>
+                <div className="m-promo-kicker">GEN RUBIT</div>
+                <div className="m-promo-title">SIGNAL BAY</div>
+              </div>
+            </div>
+            <div className="m-promo-feature">
+              <div className="m-promo-product">GR NEXT</div>
+              <div className="m-promo-copy">coming soon</div>
+            </div>
+            <div className="m-promo-grid">
+              <div className="m-promo-slot">
+                <span>01</span>
+                AUDIO TOOLS
+              </div>
+              <div className="m-promo-slot">
+                <span>02</span>
+                DESIGN LAB
+              </div>
+            </div>
+            <button className="m-settings-close" onClick={() => setPromoOpen(false)}>CLOSE</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -417,21 +503,31 @@ function centsOff(freq, note) {
   return Math.round(1200 * Math.log2(freq / freqFromNote(note)));
 }
 // McLeod Pitch Method — надёжное определение фундаментала для гитары
-function detectPitch(buf, sampleRate, rmsThreshold) {
+function detectPitch(buf, sampleRate, rmsThreshold, { preferEarly = true, minPeak = 0.48 } = {}) {
   const N = buf.length;
 
-  // RMS gate
+  let mean = 0;
+  for (let i = 0; i < N; i++) mean += buf[i];
+  mean /= N;
+
   let rms = 0;
-  for (let i = 0; i < N; i++) rms += buf[i] * buf[i];
-  if (Math.sqrt(rms / N) < rmsThreshold) return -1;
+  const x = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1));
+    const v = (buf[i] - mean) * w;
+    x[i] = v;
+    rms += v * v;
+  }
+  rms = Math.sqrt(rms / N);
+  if (rms < rmsThreshold) return null;
 
   // Диапазон поиска: только гитарные частоты 70–420 Гц
-  const tauMin = Math.floor(sampleRate / 420);
-  const tauMax = Math.min(Math.ceil(sampleRate / 70), N - 2);
+  const tauMin = Math.floor(sampleRate / 430);
+  const tauMax = Math.min(Math.ceil(sampleRate / 65), N - 2);
 
   // Префиксные суммы квадратов для быстрого вычисления m'(τ)
   const prefix = new Float64Array(N + 1);
-  for (let i = 0; i < N; i++) prefix[i + 1] = prefix[i] + buf[i] * buf[i];
+  for (let i = 0; i < N; i++) prefix[i + 1] = prefix[i] + x[i] * x[i];
   const totalSq = prefix[N];
 
   // NSDF(τ) = 2·r(τ) / m'(τ) — нормализованная функция (МПМ)
@@ -439,7 +535,7 @@ function detectPitch(buf, sampleRate, rmsThreshold) {
   for (let tau = tauMin; tau <= tauMax; tau++) {
     let r = 0;
     const len = N - tau;
-    for (let j = 0; j < len; j++) r += buf[j] * buf[j + tau];
+    for (let j = 0; j < len; j++) r += x[j] * x[j + tau];
     const m = prefix[len] + totalSq - prefix[tau];
     nsdf[tau - tauMin] = m > 1e-10 ? (2 * r) / m : 0;
   }
@@ -453,97 +549,289 @@ function detectPitch(buf, sampleRate, rmsThreshold) {
       peaks.push(i);
     }
   }
-  if (peaks.length === 0 || peakMax < 0.5) return -1;
+  if (peaks.length === 0 || peakMax < minPeak) return null;
 
-  // Берём ПЕРВЫЙ пик выше 80% от максимума — это фундаментал, не гармоника
   let T0 = -1;
-  for (const p of peaks) {
-    if (nsdf[p] >= 0.8 * peakMax) { T0 = p; break; }
+  if (preferEarly) {
+    // Берём ранний устойчивый пик: на низких струнах фундаментал часто слабее обертонов.
+    for (const p of peaks) {
+      if (nsdf[p] >= 0.62 * peakMax && nsdf[p] >= 0.36) { T0 = p; break; }
+    }
+  } else {
+    for (const p of peaks) {
+      if (nsdf[p] >= peakMax) { T0 = p; break; }
+    }
   }
-  if (T0 < 1 || T0 >= nsdf.length - 1) return -1;
+  if (T0 < 1 || T0 >= nsdf.length - 1) return null;
+
+  const tau = T0 + tauMin;
+  const clarity = nsdf[T0];
 
   // Параболическая интерполяция для точности до доли сэмпла
-  const y1 = nsdf[T0 - 1], y2 = nsdf[T0], y3 = nsdf[T0 + 1];
+  const idx = tau - tauMin;
+  const y1 = nsdf[idx - 1], y2 = nsdf[idx], y3 = nsdf[idx + 1];
   const a = (y1 + y3 - 2 * y2) / 2;
   const b = (y3 - y1) / 2;
-  let tFine = T0 + tauMin;
-  if (a !== 0) tFine -= b / (2 * a);
+  let tFine = tau;
+  if (Math.abs(a) > 1e-12) tFine -= b / (2 * a);
 
-  return sampleRate / tFine;
+  const freq = sampleRate / tFine;
+  if (!Number.isFinite(freq) || freq < 65 || freq > 430) return null;
+  return { freq, clarity, rms };
+}
+
+function detectPitchForTarget(buf, sampleRate, rmsThreshold, targetFreq, { maxHarmonic = 4, centsRange = 140 } = {}) {
+  const N = buf.length;
+
+  let mean = 0;
+  for (let i = 0; i < N; i++) mean += buf[i];
+  mean /= N;
+
+  let rms = 0;
+  const x = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1));
+    const v = (buf[i] - mean) * w;
+    x[i] = v;
+    rms += v * v;
+  }
+  rms = Math.sqrt(rms / N);
+  if (rms < rmsThreshold) return null;
+
+  const tauMin = Math.floor(sampleRate / 430);
+  const tauMax = Math.min(Math.ceil(sampleRate / 65), N - 2);
+  const prefix = new Float64Array(N + 1);
+  for (let i = 0; i < N; i++) prefix[i + 1] = prefix[i] + x[i] * x[i];
+  const totalSq = prefix[N];
+
+  const nsdf = new Float32Array(tauMax - tauMin + 1);
+  for (let tau = tauMin; tau <= tauMax; tau++) {
+    let r = 0;
+    const len = N - tau;
+    for (let j = 0; j < len; j++) r += x[j] * x[j + tau];
+    const m = prefix[len] + totalSq - prefix[tau];
+    nsdf[tau - tauMin] = m > 1e-10 ? (2 * r) / m : 0;
+  }
+
+  let best = null;
+  for (let harmonic = 1; harmonic <= maxHarmonic; harmonic++) {
+    const expected = targetFreq * harmonic;
+    const minFreq = expected / Math.pow(2, centsRange / 1200);
+    const maxFreq = expected * Math.pow(2, centsRange / 1200);
+    const fromTau = Math.max(tauMin + 1, Math.floor(sampleRate / maxFreq));
+    const toTau = Math.min(tauMax - 1, Math.ceil(sampleRate / minFreq));
+
+    let peakIdx = -1;
+    let peakVal = 0;
+    for (let tau = fromTau; tau <= toTau; tau++) {
+      const i = tau - tauMin;
+      const v = nsdf[i];
+      const isPeak = v >= nsdf[i - 1] && v >= nsdf[i + 1];
+      if (isPeak && v > peakVal) {
+        peakVal = v;
+        peakIdx = i;
+      }
+    }
+    if (peakIdx < 1 || peakVal < 0.26) continue;
+
+    const y1 = nsdf[peakIdx - 1], y2 = nsdf[peakIdx], y3 = nsdf[peakIdx + 1];
+    const a = (y1 + y3 - 2 * y2) / 2;
+    const b = (y3 - y1) / 2;
+    let tauFine = peakIdx + tauMin;
+    if (Math.abs(a) > 1e-12) tauFine -= b / (2 * a);
+
+    const heardFreq = sampleRate / tauFine;
+    const correctedFreq = heardFreq / harmonic;
+    const cents = 1200 * Math.log2(correctedFreq / targetFreq);
+    if (!Number.isFinite(cents) || Math.abs(cents) > centsRange) continue;
+
+    const score = Math.abs(cents) - peakVal * 22 + (harmonic - 1) * 6;
+    if (!best || score < best.score) {
+      best = { freq: correctedFreq, heardFreq, cents, clarity: peakVal, rms, harmonic, score };
+    }
+  }
+
+  return best;
 }
 
 // ─── TunerApp — обёртка с аудио-движком ─────────────────────────────
 function TunerApp() {
   const [micRunning, setMicRunning] = React.useState(false);
   const [cents, setCents]           = React.useState(0);
+  const [inputFreq, setInputFreq]   = React.useState(null);
   const [signal, setSignal]         = React.useState(false);
   const [inTune, setInTune]         = React.useState(false);
+  const [lockReady, setLockReady]   = React.useState(false);
+  const [readingReady, setReadingReady] = React.useState(false);
   const [autoIdx, setAutoIdx]       = React.useState(0);
   const audioRef  = React.useRef(null);
+  const startingRef = React.useRef(false);
   const lockRef   = React.useRef({ holdUntil: 0 });
-  const stableRef = React.useRef({ history: [], candidate: 0, votes: 0, silenceCount: 0 });
-  const paramsRef = React.useRef({ rmsThreshold: 0.015, emaAlpha: 0.18, refA: 440 });
+  const stableRef = React.useRef({ history: [], candidate: 0, votes: 0, silenceCount: 0, smoothCents: 0, lastTrebleAt: 0 });
+  const paramsRef = React.useRef({ rmsThreshold: 0.00114, emaAlpha: 0.18, refA: 440, mode: 'AUTO', activeIdx: 0 });
 
   function handleSettingsChange({ needleSpeed, sensitivity, refA }) {
     paramsRef.current.emaAlpha     = 0.10 + needleSpeed * 0.25;
-    paramsRef.current.rmsThreshold = 0.04  - sensitivity  * 0.035;
+    paramsRef.current.rmsThreshold = 0.0095 - sensitivity * 0.0088;
     paramsRef.current.refA         = refA;
+  }
+
+  function handleTuningTargetChange({ mode, activeIdx, refA }) {
+    if (paramsRef.current.mode !== mode || paramsRef.current.activeIdx !== activeIdx || paramsRef.current.refA !== refA) {
+      stableRef.current.history = [];
+      stableRef.current.candidate = activeIdx;
+      stableRef.current.votes = 0;
+      stableRef.current.smoothCents = cents;
+      lockRef.current.holdUntil = 0;
+      setInTune(false);
+      setLockReady(false);
+      setReadingReady(false);
+    }
+    paramsRef.current.mode = mode;
+    paramsRef.current.activeIdx = activeIdx;
+    paramsRef.current.refA = refA;
   }
 
   function tick(analyser, sampleRate) {
     const buf = new Float32Array(analyser.fftSize);
     analyser.getFloatTimeDomainData(buf);
-    const freq = detectPitch(buf, sampleRate, paramsRef.current.rmsThreshold);
+    const pitchLong = detectPitch(buf, sampleRate, paramsRef.current.rmsThreshold, { preferEarly: true, minPeak: 0.48 });
+    const shortStart = Math.max(0, buf.length - 4096);
+    const heldIdx = paramsRef.current.mode === 'MANUAL' ? paramsRef.current.activeIdx : stableRef.current.candidate;
+    const trebleTail = heldIdx >= 4 || Date.now() - stableRef.current.lastTrebleAt < 900;
+    const pitchShort = detectPitch(buf.subarray(shortStart), sampleRate, paramsRef.current.rmsThreshold * (trebleTail ? 0.48 : 0.85), {
+      preferEarly: false,
+      minPeak: trebleTail ? 0.28 : 0.42,
+    });
+    const refScale = mRefScale(paramsRef.current.refA);
+    const manualTargetIdx = paramsRef.current.activeIdx;
+    const manualTargetFreq = M_STRINGS[manualTargetIdx].freq * refScale;
+    const manualLong = paramsRef.current.mode === 'MANUAL'
+      ? detectPitchForTarget(buf, sampleRate, paramsRef.current.rmsThreshold * 0.72, manualTargetFreq, {
+          maxHarmonic: manualTargetIdx >= 4 ? 1 : 4,
+          centsRange: manualTargetIdx >= 4 ? 110 : 150,
+        })
+      : null;
+    const manualShort = paramsRef.current.mode === 'MANUAL'
+      ? detectPitchForTarget(buf.subarray(shortStart), sampleRate, paramsRef.current.rmsThreshold * (manualTargetIdx >= 4 ? 0.42 : 0.7), manualTargetFreq, {
+          maxHarmonic: manualTargetIdx >= 4 ? 1 : 4,
+          centsRange: manualTargetIdx >= 4 ? 95 : 140,
+        })
+      : null;
+    const manualPitch = manualShort || manualLong;
+    let pitch = pitchLong || pitchShort;
+    const manualTrebleGate = paramsRef.current.mode === 'MANUAL' && manualTargetIdx >= 4;
 
-    if (freq < 0) {
+    if (manualPitch) {
+      pitch = { freq: manualPitch.heardFreq || manualPitch.freq, clarity: manualPitch.clarity, rms: manualPitch.rms };
+    } else if (manualTrebleGate) {
+      pitch = null;
+    }
+
+    if (!pitch) {
       stableRef.current.history = [];
       stableRef.current.silenceCount = Math.min(stableRef.current.silenceCount + 1, 20);
-      if (stableRef.current.silenceCount > 6 && Date.now() > lockRef.current.holdUntil) {
+      const heldTreble = stableRef.current.candidate >= 4 || Date.now() - stableRef.current.lastTrebleAt < 900;
+      if (stableRef.current.silenceCount > (heldTreble ? 10 : 3)) {
         setInTune(false);
+        setLockReady(false);
+        setReadingReady(false);
         setSignal(false);
+        setInputFreq(null);
+        stableRef.current.smoothCents *= heldTreble ? 0.86 : 0.62;
+        if (Math.abs(stableRef.current.smoothCents) < 1.5) stableRef.current.smoothCents = 0;
+        const idleCents = Math.round(stableRef.current.smoothCents);
+        setCents(idleCents);
       }
     } else {
       stableRef.current.silenceCount = 0;
       setSignal(true);
 
-      // Найти ближайшую гитарную струну
-      const refScale = paramsRef.current.refA / 440;
-      let bestIdx = 0, bestDist = Infinity;
-      M_STRINGS.forEach((s, i) => {
-        const dist = Math.abs(1200 * Math.log2(freq / (s.freq * refScale)));
-        if (dist < bestDist) { bestDist = dist; bestIdx = i; }
-      });
+      let autoMatch = mNearestStringMatch(pitch.freq, refScale);
+      if (heldIdx >= 4 && pitchShort) {
+        const heldFreq = M_STRINGS[heldIdx].freq * refScale;
+        const heldShort = mCorrectedPitchForString(pitchShort.freq, heldFreq, 1);
+        if (Math.abs(heldShort.cents) <= 85) {
+          pitch = pitchShort;
+          autoMatch = { idx: heldIdx, ...heldShort };
+        }
+      } else if (pitchShort) {
+        const shortMatch = mNearestStringMatch(pitchShort.freq, refScale);
+        if (shortMatch.idx >= 4 && shortMatch.score + 8 < autoMatch.score) {
+          pitch = pitchShort;
+          autoMatch = shortMatch;
+        }
+      }
+      const bestIdx = autoMatch.idx;
+      const targetIdx = paramsRef.current.mode === 'MANUAL' ? paramsRef.current.activeIdx : bestIdx;
+      if (targetIdx >= 4) stableRef.current.lastTrebleAt = Date.now();
+      const targetFreq = M_STRINGS[targetIdx].freq * refScale;
+      const targetMatch = paramsRef.current.mode === 'MANUAL' && manualPitch
+        ? { freq: manualPitch.freq, cents: manualPitch.cents, harmonic: manualPitch.harmonic, score: manualPitch.score }
+        : paramsRef.current.mode === 'MANUAL'
+          ? mCorrectedPitchForString(pitch.freq, targetFreq, targetIdx >= 4 ? 1 : 4)
+          : autoMatch;
+      setInputFreq(targetMatch.freq);
 
       // Сбрасываем историю если сменилась струна
-      if (bestIdx !== stableRef.current.candidate) {
+      if (targetIdx !== stableRef.current.candidate) {
         stableRef.current.history = [];
-        stableRef.current.candidate = bestIdx;
+        stableRef.current.candidate = targetIdx;
         stableRef.current.votes = 1;
+        lockRef.current.holdUntil = 0;
+        setInTune(false);
+        setLockReady(false);
+        setReadingReady(false);
       } else {
         stableRef.current.votes = Math.min(stableRef.current.votes + 1, 10);
       }
 
       // Накапливаем замеры
-      const rawC = 1200 * Math.log2(freq / (M_STRINGS[bestIdx].freq * refScale));
+      const rawC = targetMatch.cents;
+      const isTrebleString = targetIdx >= 4;
+      if (targetIdx >= 4 && Math.abs(rawC) > 90) {
+        setTimeout(() => {
+          if (audioRef.current) tick(audioRef.current.analyser, sampleRate);
+        }, 55);
+        return;
+      }
       const h = stableRef.current.history;
+      if (isTrebleString && h.length >= 4) {
+        const baseline = mMedian(h.slice(-5));
+        if (Math.abs(rawC - baseline) > 28 && pitch.clarity < 0.92) {
+          setTimeout(() => {
+            if (audioRef.current) tick(audioRef.current.analyser, sampleRate);
+          }, 55);
+          return;
+        }
+      }
       h.push(rawC);
-      if (h.length > 8) h.shift();
+      const maxHistory = isTrebleString ? 9 : 7;
+      if (h.length > maxHistory) h.shift();
 
       // Обновляем стрелку ТОЛЬКО когда последние 4 замера совпадают (±12¢)
       // Во время атаки струны держим старое значение — как реальный тюнер
-      if (h.length >= 4) {
-        const last4 = h.slice(-4);
-        const span = Math.max(...last4) - Math.min(...last4);
-        if (span <= 12) {
-          const avg = last4.reduce((s, v) => s + v, 0) / 4;
-          const c = Math.max(-50, Math.min(50, Math.round(avg)));
+      if (h.length >= (isTrebleString ? 5 : 3)) {
+        const recent = h.slice(isTrebleString ? -7 : -5);
+        const span = Math.max(...recent) - Math.min(...recent);
+        const spanLimit = isTrebleString ? 13 : 18;
+        if (span <= spanLimit || pitch.clarity > 0.86) {
+          const measured = mClamp(mMedian(recent), -50, 50);
+          const alpha = paramsRef.current.emaAlpha * (isTrebleString ? 0.58 : 1);
+          stableRef.current.smoothCents += (measured - stableRef.current.smoothCents) * alpha;
+          const c = Math.round(mClamp(stableRef.current.smoothCents, -50, 50));
           setCents(c);
-          if (stableRef.current.votes >= 4) setAutoIdx(bestIdx);
-          if (Math.abs(c) <= 4) {
-            setInTune(true);
-            lockRef.current.holdUntil = Date.now() + 2500;
-          } else if (Math.abs(c) > 12 && Date.now() > lockRef.current.holdUntil) {
+          setReadingReady(true);
+          if (paramsRef.current.mode === 'AUTO' && stableRef.current.votes >= 5) setAutoIdx(bestIdx);
+          if (Math.abs(c) <= 3 && pitch.clarity > 0.62) {
+            if (stableRef.current.votes >= 4 && h.length >= 4) {
+              setInTune(true);
+              setLockReady(true);
+              lockRef.current.holdUntil = Date.now() + 1200;
+            }
+          } else if (Math.abs(c) > 7 && Date.now() > lockRef.current.holdUntil) {
             setInTune(false);
+            setLockReady(false);
           }
         }
       }
@@ -555,7 +843,8 @@ function TunerApp() {
   }
 
   async function startMic() {
-    if (micRunning) return;
+    if (micRunning || startingRef.current || audioRef.current) return;
+    startingRef.current = true;
     try {
       const actx = new (window.AudioContext || window.webkitAudioContext)();
       // getUserMedia must be called synchronously within the user gesture —
@@ -567,12 +856,17 @@ function TunerApp() {
       await actx.resume();
       const stream = await streamPromise;
       const analyser = actx.createAnalyser();
-      analyser.fftSize = 4096;
-      actx.createMediaStreamSource(stream).connect(analyser);
-      audioRef.current = { actx, analyser };
+      const inputGain = actx.createGain();
+      inputGain.gain.value = 2.45;
+      analyser.fftSize = 8192;
+      analyser.smoothingTimeConstant = 0;
+      actx.createMediaStreamSource(stream).connect(inputGain).connect(analyser);
+      audioRef.current = { actx, analyser, inputGain };
       setMicRunning(true);
+      startingRef.current = false;
       tick(analyser, actx.sampleRate);
     } catch(e) {
+      startingRef.current = false;
       console.error(e);
       alert('Microphone access is required to use the tuner.');
     }
@@ -582,10 +876,14 @@ function TunerApp() {
     <MobileTuner
       initialCents={cents}
       signal={signal}
-      inTune={inTune}
+      inTune={inTune && lockReady}
+      readingReady={readingReady}
+      micRunning={micRunning}
+      inputFreq={inputFreq}
       autoIdx={autoIdx}
       onEngageMic={micRunning ? null : startMic}
       onSettingsChange={handleSettingsChange}
+      onTuningTargetChange={handleTuningTargetChange}
     />
   );
 }
