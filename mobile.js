@@ -1205,27 +1205,32 @@ function TunerApp() {
           // хотя нота определена стабильно. Запасной путь — длинная серия
           // стабильных замеров (узкий разброс) тоже даёт лок.
           const lockClarity = Math.max(pitch.clarity || 0, pitchLong ? pitchLong.clarity : 0, pitchShort ? pitchShort.clarity : 0);
-          const steadyEnough = stableRef.current.votes >= 6 && span <= 6;
-          if (Math.abs(c) <= 3 && (lockClarity > 0.62 || steadyEnough)) {
+          const steadyEnough = stableRef.current.votes >= 5 && span <= 6;
+          // Вход в лок — по реальному замеру (медиане), а не по сглаженному c:
+          // EMA доезжает до нуля с запаздыванием, и лок зря ждал её.
+          const inZone = Math.abs(c) <= 3 || Math.abs(measured) <= 2.5;
+          if (inZone && (lockClarity > 0.62 || steadyEnough)) {
             lockRef.current.outCount = 0;
-            if (stableRef.current.votes >= 4 && h.length >= 4) {
+            if (stableRef.current.votes >= 3 && h.length >= 4) {
+              if (!lockRef.current.engaged) stableRef.current.smoothCents = measured;
               setInTune(true);
               setLockReady(true);
-              lockRef.current.holdUntil = Date.now() + 1200;
+              lockRef.current.holdUntil = Date.now() + 1500;
               lockRef.current.engaged = true;
             }
-          } else if (Math.abs(c) > 7 && Date.now() > lockRef.current.holdUntil) {
-            // выходим из лока только после 3 подряд кадров за порогом —
-            // одиночный шумовой выброс фиксацию не сбивает
+          } else if (Math.abs(c) > 8 && Date.now() > lockRef.current.holdUntil) {
+            // выходим из лока только после 4 подряд кадров за порогом —
+            // шумовые выбросы фиксацию не сбивают
             lockRef.current.outCount += 1;
-            if (lockRef.current.outCount >= 3) {
+            if (lockRef.current.outCount >= 4) {
               setInTune(false);
               setLockReady(false);
               lockRef.current.engaged = false;
               lockRef.current.outCount = 0;
             }
           } else {
-            lockRef.current.outCount = 0;
+            // средняя зона — счётчик выхода затухает, а не сбрасывается мгновенно
+            lockRef.current.outCount = Math.max(0, lockRef.current.outCount - 1);
           }
           // Залипание в строе: пока лок активен, стрелка и ридаут держат
           // ровно 0 — реальное значение продолжает копиться в smoothCents,
