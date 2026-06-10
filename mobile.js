@@ -946,7 +946,8 @@ function TunerApp() {
   const startingRef = React.useRef(false);
   const lockRef = React.useRef({
     holdUntil: 0,
-    engaged: false
+    engaged: false,
+    outCount: 0
   });
   const stableRef = React.useRef({
     history: [],
@@ -1194,7 +1195,8 @@ function TunerApp() {
         const spanLimit = isTrebleString ? 13 : 18;
         if (span <= spanLimit || pitch.clarity > 0.86) {
           const measured = mClamp(mMedian(recent), -50, 50);
-          const alpha = paramsRef.current.emaAlpha * (isTrebleString ? 0.58 : 1);
+          // во время лока сглаживаем сильнее — шумовые выбросы не раскачивают c
+          const alpha = paramsRef.current.emaAlpha * (isTrebleString ? 0.58 : 1) * (lockRef.current.engaged ? 0.6 : 1);
           stableRef.current.smoothCents += (measured - stableRef.current.smoothCents) * alpha;
           const c = Math.round(mClamp(stableRef.current.smoothCents, -50, 50));
           if (paramsRef.current.mode === 'AUTO' && stableRef.current.votes >= 5) setAutoIdx(bestIdx);
@@ -1205,6 +1207,7 @@ function TunerApp() {
           const lockClarity = Math.max(pitch.clarity || 0, pitchLong ? pitchLong.clarity : 0, pitchShort ? pitchShort.clarity : 0);
           const steadyEnough = stableRef.current.votes >= 6 && span <= 6;
           if (Math.abs(c) <= 3 && (lockClarity > 0.62 || steadyEnough)) {
+            lockRef.current.outCount = 0;
             if (stableRef.current.votes >= 4 && h.length >= 4) {
               setInTune(true);
               setLockReady(true);
@@ -1212,9 +1215,17 @@ function TunerApp() {
               lockRef.current.engaged = true;
             }
           } else if (Math.abs(c) > 7 && Date.now() > lockRef.current.holdUntil) {
-            setInTune(false);
-            setLockReady(false);
-            lockRef.current.engaged = false;
+            // выходим из лока только после 3 подряд кадров за порогом —
+            // одиночный шумовой выброс фиксацию не сбивает
+            lockRef.current.outCount += 1;
+            if (lockRef.current.outCount >= 3) {
+              setInTune(false);
+              setLockReady(false);
+              lockRef.current.engaged = false;
+              lockRef.current.outCount = 0;
+            }
+          } else {
+            lockRef.current.outCount = 0;
           }
           // Залипание в строе: пока лок активен, стрелка и ридаут держат
           // ровно 0 — реальное значение продолжает копиться в smoothCents,

@@ -946,7 +946,9 @@ body {
   .m-safe-top    { grid-area: safetop; height: max(env(safe-area-inset-top, 4px), 4px); }
   .m-top         { grid-area: top; padding: 2px 16px 4px; }
   .m-top-logo    { width: 26px; height: 26px; }
-  .m-vu          { grid-area: vu; margin: 2px 0 0 12px; min-height: 220px; }
+  /* в landscape циферблат крупнее — опускаем SVG ниже LED-полосы,
+     чтобы дуга шкалы не заезжала под неё */
+  .m-vu          { grid-area: vu; margin: 2px 0 0 12px; min-height: 220px; padding-top: 56px; }
   .m-readout     { grid-area: readout; margin: 2px 12px 0 0; padding: 6px 4px; }
   .m-readout-note { font-size: 24px; }
   .m-readout-mono { font-size: 14px; }
