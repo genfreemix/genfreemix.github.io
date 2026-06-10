@@ -336,7 +336,7 @@ function MobileTuner({
         inTune={inTune}
         signal={signal}
         readingReady={readingReady}
-        springK={0.03 + needleSpeed * 0.09} springD={0.92 - needleSpeed * 0.10} />
+        springK={0.02 + needleSpeed * 0.16} springD={0.94 - needleSpeed * 0.12} />
 
       {/* Readout */}
       <div className="m-readout">
@@ -656,9 +656,9 @@ function TunerApp() {
   const [autoIdx, setAutoIdx]       = React.useState(0);
   const audioRef  = React.useRef(null);
   const startingRef = React.useRef(false);
-  const lockRef   = React.useRef({ holdUntil: 0 });
+  const lockRef   = React.useRef({ holdUntil: 0, engaged: false });
   const stableRef = React.useRef({ history: [], candidate: 0, votes: 0, silenceCount: 0, smoothCents: 0, lastTrebleAt: 0 });
-  const paramsRef = React.useRef({ rmsThreshold: 0.00114, emaAlpha: 0.18, refA: 440, mode: 'AUTO', activeIdx: 0 });
+  const paramsRef = React.useRef({ rmsThreshold: 0.0007, emaAlpha: 0.31, refA: 440, mode: 'AUTO', activeIdx: 0 });
 
   function releaseAudioHandle(handle) {
     if (!handle) return;
@@ -693,6 +693,7 @@ function TunerApp() {
     stableRef.current.votes = 0;
     stableRef.current.smoothCents = 0;
     lockRef.current.holdUntil = 0;
+    lockRef.current.engaged = false;
     if (!resetState) return;
     setMicRunning(false);
     setSignal(false);
@@ -718,8 +719,10 @@ function TunerApp() {
   }, []);
 
   function handleSettingsChange({ needleSpeed, sensitivity, refA }) {
-    paramsRef.current.emaAlpha     = 0.10 + needleSpeed * 0.25;
-    paramsRef.current.rmsThreshold = 0.0095 - sensitivity * 0.0088;
+    // широкий диапазон, чтобы слайдер был реально заметен:
+    // SMOOTH ≈ 0.06 (вязкая стрелка), FAST ≈ 0.56 (почти сырой замер)
+    paramsRef.current.emaAlpha     = 0.06 + needleSpeed * 0.5;
+    paramsRef.current.rmsThreshold = 0.008 - sensitivity * 0.0077;
     paramsRef.current.refA         = refA;
   }
 
@@ -730,6 +733,7 @@ function TunerApp() {
       stableRef.current.votes = 0;
       stableRef.current.smoothCents = cents;
       lockRef.current.holdUntil = 0;
+      lockRef.current.engaged = false;
       setInTune(false);
       setLockReady(false);
       setReadingReady(false);
@@ -790,6 +794,7 @@ function TunerApp() {
         setReadingReady(false);
         setSignal(false);
         setInputFreq(null);
+        lockRef.current.engaged = false;
         stableRef.current.smoothCents *= heldTreble ? 0.86 : 0.62;
         if (Math.abs(stableRef.current.smoothCents) < 1.5) stableRef.current.smoothCents = 0;
         const idleCents = Math.round(stableRef.current.smoothCents);
@@ -831,6 +836,7 @@ function TunerApp() {
         stableRef.current.candidate = targetIdx;
         stableRef.current.votes = 1;
         lockRef.current.holdUntil = 0;
+        lockRef.current.engaged = false;
         setInTune(false);
         setLockReady(false);
         setReadingReady(false);
@@ -874,19 +880,24 @@ function TunerApp() {
           const alpha = paramsRef.current.emaAlpha * (isTrebleString ? 0.58 : 1);
           stableRef.current.smoothCents += (measured - stableRef.current.smoothCents) * alpha;
           const c = Math.round(mClamp(stableRef.current.smoothCents, -50, 50));
-          setCents(c);
-          setReadingReady(true);
           if (paramsRef.current.mode === 'AUTO' && stableRef.current.votes >= 5) setAutoIdx(bestIdx);
           if (Math.abs(c) <= 3 && pitch.clarity > 0.62) {
             if (stableRef.current.votes >= 4 && h.length >= 4) {
               setInTune(true);
               setLockReady(true);
               lockRef.current.holdUntil = Date.now() + 1200;
+              lockRef.current.engaged = true;
             }
           } else if (Math.abs(c) > 7 && Date.now() > lockRef.current.holdUntil) {
             setInTune(false);
             setLockReady(false);
+            lockRef.current.engaged = false;
           }
+          // Залипание в строе: пока лок активен, стрелка и ридаут держат
+          // ровно 0 — реальное значение продолжает копиться в smoothCents,
+          // выход из лока по гистерезису (>7¢) выше.
+          setCents(lockRef.current.engaged ? 0 : c);
+          setReadingReady(true);
         }
       }
     }
@@ -933,7 +944,7 @@ function TunerApp() {
       handle.source = source;
       handle.analyser = analyser;
       handle.inputGain = inputGain;
-      inputGain.gain.value = 2.45;
+      inputGain.gain.value = 3.2;
       analyser.fftSize = 8192;
       analyser.smoothingTimeConstant = 0;
       handle.buf = new Float32Array(analyser.fftSize);
