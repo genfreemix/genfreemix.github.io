@@ -8,6 +8,7 @@
   "devDependencies": {
     "@babel/cli": "^7.24.0",
     "@babel/core": "^7.24.0",
-    "@babel/preset-react": "^7.24.0"
+    "@babel/preset-react": "^7.24.0",
+    "puppeteer-core": "^25.1.0"
   }
 }
