@@ -175,8 +175,10 @@ function MobileVU({
       opacity: isMid && !inHot ? 0.82 : 1
     }));
     if (isMajor) {
-      const lx = cx + Math.cos(rad) * (r - 50);
-      const ly = cy + Math.sin(rad) * (r - 50);
+      // крайние ±5 — глубже к центру: в ландшафте slice-кроп срезает бока
+      const labelR = Math.abs(v) === 50 ? r - 68 : r - 50;
+      const lx = cx + Math.cos(rad) * labelR;
+      const ly = cy + Math.sin(rad) * labelR;
       ticks.push(/*#__PURE__*/React.createElement("text", {
         key: 'l' + v,
         x: lx,

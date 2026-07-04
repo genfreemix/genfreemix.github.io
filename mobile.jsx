@@ -114,8 +114,10 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false, rea
       stroke={inHot ? hot : ink} strokeWidth={w}
       opacity={isMid && !inHot ? 0.82 : 1} />);
     if (isMajor) {
-      const lx = cx + Math.cos(rad) * (r - 50);
-      const ly = cy + Math.sin(rad) * (r - 50);
+      // крайние ±5 — глубже к центру: в ландшафте slice-кроп срезает бока
+      const labelR = Math.abs(v) === 50 ? r - 68 : r - 50;
+      const lx = cx + Math.cos(rad) * labelR;
+      const ly = cy + Math.sin(rad) * labelR;
       ticks.push(<text key={'l'+v} x={lx} y={ly}
         textAnchor="middle" dominantBaseline="middle"
         fill={inHot ? hot : ink}
