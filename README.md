@@ -4,7 +4,7 @@
 LED-индикатор, две темы (Cream / Midnight). Работает в браузере, ставится как PWA
 и упаковывается в Android-приложение (TWA) для RuStore / Google Play.
 
-**Live:** https://tuner-jet-sigma.vercel.app
+**Live:** https://genfreemix.github.io (зеркало: https://tuner-jet-sigma.vercel.app)
 
 ## Как устроено
 
@@ -34,7 +34,7 @@ npm run compile    # mobile.jsx → mobile.js
 
 ## Деплой
 
-Пуш в `main` → Vercel деплоит автоматически (~30–60 сек). Больше ничего делать не нужно.
+Пуш в `main` (origin) → Vercel деплоит автоматически. Основной хостинг — GitHub Pages (remote `pages`): `git push pages main:main`. Пушить в оба remote.
 
 ## Структура
 

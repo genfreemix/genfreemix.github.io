@@ -721,7 +721,7 @@ function MobileTuner({
     onClick: () => setRefA(hz)
   }, hz, " Hz")))), /*#__PURE__*/React.createElement("a", {
     className: "m-settings-privacy",
-    href: "https://tuner-jet-sigma.vercel.app/privacy.html",
+    href: "https://genfreemix.github.io/privacy.html",
     target: "_blank",
     rel: "noopener noreferrer"
   }, "PRIVACY POLICY"), /*#__PURE__*/React.createElement("button", {
