@@ -197,12 +197,8 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false, rea
         <rect width="1000" height="560" fill="url(#mScaleBg)" />
         {lampOn && !isMid && <rect width="1000" height="560" fill="url(#mLampGlow)" />}
 
-        <text x="500" y="68" textAnchor="middle"
-              fontFamily="'Helvetica Neue', sans-serif"
-              fontSize="18" letterSpacing="6" fontWeight="500" fill={ink}>
-          GUITAR TUNING
-        </text>
-
+        {/* заголовок GUITAR TUNING удалён: на всех телефонах он скрыт LED-баром,
+            а на части устройств выглядывал обрезанным из-за иного кропа svg */}
         <path d={arcPath(r, -55, 55)} fill="none" stroke={ink} strokeWidth="1.5" />
         <path d={arcPath(r+5, 20, 55)} fill="none" stroke={hot} strokeWidth="6" />
         {ticks}

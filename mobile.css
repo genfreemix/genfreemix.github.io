@@ -554,7 +554,11 @@ body {
 .m-string-btn {
   appearance: none; border: 0; padding: 0; background: transparent;
   cursor: pointer; display: flex; flex-direction: column; font-family: inherit;
+  width: 100%;
 }
+/* явная ширина: кнопка-флекс не во всех движках растягивает детей
+   (Samsung/WebView-фолбэк TWA схлопывал фонарь и табличку по контенту) */
+.m-lamp-cap, .m-string-plate { width: 100%; }
 .m-lamp-cap {
   position: relative; height: 26px;
   background: linear-gradient(180deg, #14110d 0%, #1f1a14 50%, #14110d 100%);

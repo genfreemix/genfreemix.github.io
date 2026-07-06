@@ -325,16 +325,7 @@ function MobileVU({
     width: "1000",
     height: "560",
     fill: "url(#mLampGlow)"
-  }), /*#__PURE__*/React.createElement("text", {
-    x: "500",
-    y: "68",
-    textAnchor: "middle",
-    fontFamily: "'Helvetica Neue', sans-serif",
-    fontSize: "18",
-    letterSpacing: "6",
-    fontWeight: "500",
-    fill: ink
-  }, "GUITAR TUNING"), /*#__PURE__*/React.createElement("path", {
+  }), /*#__PURE__*/React.createElement("path", {
     d: arcPath(r, -55, 55),
     fill: "none",
     stroke: ink,
