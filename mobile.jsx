@@ -144,8 +144,11 @@ function MobileVU({ cents, theme, lampColor, lampOn, inTune, signal = false, rea
   const hasStableRead = signal && readingReady;
   // прогресс расстройки: 0 = в нуле, 1 = край
   const detune = absC / 50;
-  // в lock — полосы НЕ смыкаются полностью, оставляем зазор для разряда
-  const barW = locked ? 42 : hasStableRead ? (50 - detune * 36) : 14;
+  // в lock — полосы НЕ смыкаются полностью, оставляем зазор для разряда.
+  // Предлоковую ширину ограничиваем 44% (не даём разъехаться до самого
+  // центра у нуля) — иначе перед локом полосы прыгают к центру и тут же
+  // отскакивают на 42%. Так подход к локу плавный, без «дёрганья».
+  const barW = locked ? 42 : hasStableRead ? Math.min(50 - detune * 36, 44) : 14;
   // ширина «коридора» разряда между концами полос (в % от шкалы)
   const sparkGap = locked ? (100 - barW * 2) : 0;
 
@@ -644,6 +647,17 @@ function detectPitchForTarget(prep, rmsThreshold, targetFreq, { maxHarmonic = 4,
   return best;
 }
 
+// ─── Калибровка шума и детект удара ──────────────────────────────────
+// NF_MARGIN  — во сколько раз сигнал должен превышать уровень шума,
+//              чтобы считаться струной (иначе — фон, игнорируем).
+// ATTACK_RATIO — резкий подъём громкости в N раз = новый удар по струне
+//              (сигнал к перезамеру и выходу из «вечного» лока).
+// ATTACK_COOLDOWN — минимальный интервал между ударами (мс), чтобы
+//              один щипок не считался несколько раз.
+const NF_MARGIN = 2.2;
+const ATTACK_RATIO = 2.2;
+const ATTACK_COOLDOWN = 220;
+
 // ─── TunerApp — обёртка с аудио-движком ─────────────────────────────
 function TunerApp() {
   const [micRunning, setMicRunning] = React.useState(false);
@@ -660,6 +674,10 @@ function TunerApp() {
   const startingRef = React.useRef(false);
   const lockRef   = React.useRef({ holdUntil: 0, engaged: false, outCount: 0 });
   const stableRef = React.useRef({ history: [], candidate: 0, votes: 0, silenceCount: 0, smoothCents: 0, lastTrebleAt: 0, pendingIdx: -1, pendingCount: 0 });
+  // Огибающая громкости для калибровки шума и детекта удара:
+  // fast — быстрая (реагирует на атаку), slow — медленная (фон/сустейн),
+  // noiseFloor — плавающий уровень тишины (быстро вниз, медленно вверх).
+  const envRef    = React.useRef({ fast: 0, slow: 0, noiseFloor: 0, lastAttack: 0 });
   const paramsRef = React.useRef({ rmsThreshold: 0.0007, emaAlpha: 0.31, refA: 440, mode: 'AUTO', activeIdx: 0 });
 
   function releaseAudioHandle(handle) {
@@ -696,6 +714,10 @@ function TunerApp() {
     stableRef.current.smoothCents = 0;
     lockRef.current.holdUntil = 0;
     lockRef.current.engaged = false;
+    envRef.current.fast = 0;
+    envRef.current.slow = 0;
+    envRef.current.noiseFloor = 0;
+    envRef.current.lastAttack = 0;
     if (!resetState) return;
     setMicRunning(false);
     setSignal(false);
@@ -754,10 +776,44 @@ function TunerApp() {
     const prepLong = mPrepareNsdf(buf, sampleRate);
     const shortStart = Math.max(0, buf.length - 4096);
     const prepShort = mPrepareNsdf(buf.subarray(shortStart), sampleRate);
-    const pitchLong = detectPitch(prepLong, paramsRef.current.rmsThreshold, { preferEarly: true, minPeak: 0.48 });
+
+    // ── Калибровка уровня шума + детект удара ─────────────────────────
+    // Плавающий noiseFloor быстро опускается к тишине и медленно растёт,
+    // отслеживая реальный фон помещения. Эффективный порог берём как
+    // максимум из пользовательской чувствительности и (шум × запас) —
+    // так фон отсекается, а к явному звуку струны чувствительность
+    // остаётся высокой.
+    const env = envRef.current;
+    const frameRms = prepLong.rms;
+    const transientRms = prepShort.rms;   // короткое окно — отзывчивее на атаку
+    const prevSlow = env.slow || frameRms;
+    if (env.noiseFloor === 0 || frameRms < env.noiseFloor) env.noiseFloor = frameRms;
+    else env.noiseFloor += (frameRms - env.noiseFloor) * 0.0006;
+    const floorGate = Math.max(paramsRef.current.rmsThreshold, env.noiseFloor * NF_MARGIN);
+    const nowMs = Date.now();
+    // новый удар: резкий подъём короткой громкости над медленной огибающей,
+    // явно выше порога шума и не чаще ATTACK_COOLDOWN
+    const isAttack = transientRms > floorGate
+      && transientRms > prevSlow * ATTACK_RATIO
+      && (nowMs - env.lastAttack) > ATTACK_COOLDOWN;
+    env.fast += (transientRms - env.fast) * 0.5;
+    env.slow += (frameRms - env.slow) * 0.06;
+    if (isAttack) {
+      // новый щипок — выходим из «вечного» лока и начинаем замер заново
+      env.lastAttack = nowMs;
+      lockRef.current.engaged = false;
+      lockRef.current.outCount = 0;
+      lockRef.current.holdUntil = 0;
+      stableRef.current.history = [];
+      stableRef.current.votes = 0;
+      setInTune(false);
+      setLockReady(false);
+    }
+
+    const pitchLong = detectPitch(prepLong, floorGate, { preferEarly: true, minPeak: 0.48 });
     const heldIdx = paramsRef.current.mode === 'MANUAL' ? paramsRef.current.activeIdx : stableRef.current.candidate;
     const trebleTail = heldIdx >= 4 || Date.now() - stableRef.current.lastTrebleAt < 900;
-    const pitchShort = detectPitch(prepShort, paramsRef.current.rmsThreshold * (trebleTail ? 0.48 : 0.85), {
+    const pitchShort = detectPitch(prepShort, floorGate * (trebleTail ? 0.48 : 0.85), {
       preferEarly: false,
       minPeak: trebleTail ? 0.28 : 0.42,
     });
@@ -765,13 +821,13 @@ function TunerApp() {
     const manualTargetIdx = paramsRef.current.activeIdx;
     const manualTargetFreq = M_STRINGS[manualTargetIdx].freq * refScale;
     const manualLong = paramsRef.current.mode === 'MANUAL'
-      ? detectPitchForTarget(prepLong, paramsRef.current.rmsThreshold * 0.72, manualTargetFreq, {
+      ? detectPitchForTarget(prepLong, floorGate * 0.72, manualTargetFreq, {
           maxHarmonic: manualTargetIdx >= 4 ? 1 : 4,
           centsRange: manualTargetIdx >= 4 ? 110 : 150,
         })
       : null;
     const manualShort = paramsRef.current.mode === 'MANUAL'
-      ? detectPitchForTarget(prepShort, paramsRef.current.rmsThreshold * (manualTargetIdx >= 4 ? 0.42 : 0.7), manualTargetFreq, {
+      ? detectPitchForTarget(prepShort, floorGate * (manualTargetIdx >= 4 ? 0.42 : 0.7), manualTargetFreq, {
           maxHarmonic: manualTargetIdx >= 4 ? 1 : 4,
           centsRange: manualTargetIdx >= 4 ? 95 : 140,
         })
@@ -789,18 +845,24 @@ function TunerApp() {
     if (!pitch) {
       stableRef.current.history = [];
       stableRef.current.silenceCount = Math.min(stableRef.current.silenceCount + 1, 20);
-      const heldTreble = stableRef.current.candidate >= 4 || Date.now() - stableRef.current.lastTrebleAt < 900;
-      if (stableRef.current.silenceCount > (heldTreble ? 10 : 3)) {
-        setInTune(false);
-        setLockReady(false);
-        setReadingReady(false);
-        setSignal(false);
-        setInputFreq(null);
-        lockRef.current.engaged = false;
-        stableRef.current.smoothCents *= heldTreble ? 0.86 : 0.62;
-        if (Math.abs(stableRef.current.smoothCents) < 1.5) stableRef.current.smoothCents = 0;
-        const idleCents = Math.round(stableRef.current.smoothCents);
-        setCents(idleCents);
+      if (lockRef.current.engaged) {
+        // ВЕЧНЫЙ ЛОК: струна попала в строй и затухает — держим зелёный
+        // статус и стрелку на нуле бесконечно. Сброс — только по новому
+        // удару (детект выше) либо смене струны. Fade out лок не гасит.
+        setCents(0);
+      } else {
+        const heldTreble = stableRef.current.candidate >= 4 || Date.now() - stableRef.current.lastTrebleAt < 900;
+        if (stableRef.current.silenceCount > (heldTreble ? 10 : 3)) {
+          setInTune(false);
+          setLockReady(false);
+          setReadingReady(false);
+          setSignal(false);
+          setInputFreq(null);
+          stableRef.current.smoothCents *= heldTreble ? 0.86 : 0.62;
+          if (Math.abs(stableRef.current.smoothCents) < 1.5) stableRef.current.smoothCents = 0;
+          const idleCents = Math.round(stableRef.current.smoothCents);
+          setCents(idleCents);
+        }
       }
     } else {
       stableRef.current.silenceCount = 0;
@@ -867,6 +929,10 @@ function TunerApp() {
       // Накапливаем замеры
       const rawC = targetMatch.cents;
       const isTrebleString = targetIdx >= 4;
+      // Струна G (3-я, ~196 Гц) — сильная 2-я гармоника сбивает алгоритм,
+      // поэтому ей даём усиленное усреднение и отсев выбросов, как у высоких.
+      const isG = targetIdx === 3;
+      const needsExtraAvg = isTrebleString || isG;
       if (targetIdx >= 4 && Math.abs(rawC) > 90) {
         handle.timerId = setTimeout(() => {
           const current = audioRef.current;
@@ -875,9 +941,12 @@ function TunerApp() {
         return;
       }
       const h = stableRef.current.history;
-      if (isTrebleString && h.length >= 4) {
+      if (needsExtraAvg && h.length >= 4) {
         const baseline = mMedian(h.slice(-5));
-        if (Math.abs(rawC - baseline) > 34 && pitch.clarity < 0.88) {
+        // для G порог выброса мягче (гармонические ошибки мельче октавных)
+        const outlierGap = isG ? 42 : 34;
+        const clarityGate = isG ? 0.9 : 0.88;
+        if (Math.abs(rawC - baseline) > outlierGap && pitch.clarity < clarityGate) {
           handle.timerId = setTimeout(() => {
             const current = audioRef.current;
             if (current && !current.stopped && !document.hidden) tick(current.analyser, sampleRate);
@@ -886,19 +955,21 @@ function TunerApp() {
         }
       }
       h.push(rawC);
-      const maxHistory = isTrebleString ? 9 : 7;
+      const maxHistory = needsExtraAvg ? 9 : 7;
       if (h.length > maxHistory) h.shift();
 
       // Обновляем стрелку ТОЛЬКО когда последние 4 замера совпадают (±12¢)
       // Во время атаки струны держим старое значение — как реальный тюнер
-      if (h.length >= (isTrebleString ? 4 : 3)) {
-        const recent = h.slice(isTrebleString ? -6 : -5);
+      if (h.length >= (needsExtraAvg ? 4 : 3)) {
+        const recent = h.slice(needsExtraAvg ? -6 : -5);
         const span = Math.max(...recent) - Math.min(...recent);
-        const spanLimit = isTrebleString ? 15 : 18;
+        const spanLimit = isTrebleString ? 15 : isG ? 16 : 18;
         if (span <= spanLimit || pitch.clarity > 0.86) {
           const measured = mClamp(mMedian(recent), -50, 50);
-          // во время лока сглаживаем сильнее — шумовые выбросы не раскачивают c
-          const alpha = paramsRef.current.emaAlpha * (isTrebleString ? 0.68 : 1) * (lockRef.current.engaged ? 0.6 : 1);
+          // во время лока сглаживаем сильнее — шумовые выбросы не раскачивают c;
+          // G усредняем плавнее высоких (0.8), но заметнее басов
+          const trebleFactor = isTrebleString ? 0.68 : isG ? 0.8 : 1;
+          const alpha = paramsRef.current.emaAlpha * trebleFactor * (lockRef.current.engaged ? 0.6 : 1);
           stableRef.current.smoothCents += (measured - stableRef.current.smoothCents) * alpha;
           const c = Math.round(mClamp(stableRef.current.smoothCents, -50, 50));
           if (paramsRef.current.mode === 'AUTO' && stableRef.current.votes >= 5) setAutoIdx(bestIdx);
@@ -924,23 +995,12 @@ function TunerApp() {
               lockRef.current.holdUntil = Date.now() + 1500;
               lockRef.current.engaged = true;
             }
-          } else if (Math.abs(c) > 8 && Date.now() > lockRef.current.holdUntil) {
-            // выходим из лока только после 4 подряд кадров за порогом —
-            // шумовые выбросы фиксацию не сбивают
-            lockRef.current.outCount += 1;
-            if (lockRef.current.outCount >= 4) {
-              setInTune(false);
-              setLockReady(false);
-              lockRef.current.engaged = false;
-              lockRef.current.outCount = 0;
-            }
-          } else {
-            // средняя зона — счётчик выхода затухает, а не сбрасывается мгновенно
-            lockRef.current.outCount = Math.max(0, lockRef.current.outCount - 1);
           }
-          // Залипание в строе: пока лок активен, стрелка и ридаут держат
-          // ровно 0 — реальное значение продолжает копиться в smoothCents,
-          // выход из лока по гистерезису (>7¢) выше.
+          // Пока лок активен — НЕ выходим из него по расстройке или затуханию.
+          // Струна попала в строй → зелёный держится «вечно», сброс только по
+          // новому удару (детект атаки в начале tick) или смене струны.
+          // Залипание в строе: стрелка и ридаут держат ровно 0, реальное
+          // значение продолжает копиться в smoothCents.
           setCents(lockRef.current.engaged ? 0 : c);
           setReadingReady(true);
         }
@@ -989,7 +1049,10 @@ function TunerApp() {
       handle.source = source;
       handle.analyser = analyser;
       handle.inputGain = inputGain;
-      inputGain.gain.value = 3.9;
+      // усиление входа: 4.8 — компенсирует более тихий сигнал системного
+      // WebView (Capacitor) против прежнего Chrome; шум отсекается плавающим
+      // noiseFloor, так что рост усиления не поднимает ложные срабатывания
+      inputGain.gain.value = 4.8;
       analyser.fftSize = 8192;
       analyser.smoothingTimeConstant = 0;
       handle.buf = new Float32Array(analyser.fftSize);
